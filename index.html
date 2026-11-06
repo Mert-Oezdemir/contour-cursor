@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contour Cursor</title>
+<style>
+  :root {--paper: #e5e8c8; --ink: #153d38; --deep: #143f4b; --map: #d5e2ba; --soft: #38594e; --edge: #7c9677; font: 1rem/1.55 system-ui, sans-serif}
+  * {box-sizing: border-box}
+  body {margin: 0; background: var(--paper); color: var(--ink)}
+  main {max-width: 84rem; margin: auto; padding: clamp(1rem, 4vw, 3.5rem)}
+  header {display: flex; justify-content: space-between; align-items: end; flex-wrap: wrap; gap: .7rem 2rem; margin-bottom: 1.1rem}
+  h1, h2, p {margin: 0}
+  h1 {font: 400 clamp(2.75rem, 8vw, 7rem)/.92 Georgia, serif; letter-spacing: -.085em}
+  header p {color: var(--soft); max-width: 23rem}
+  .workspace {display: grid; grid-template-columns: minmax(0, 2.55fr) minmax(14rem, 1fr); gap: clamp(.8rem, 3vw, 1.7rem); align-items: start}
+  figure {margin: 0; min-width: 0}
+  svg {display: block; width: 100%; height: auto; background: var(--map); border: 1px solid var(--ink); border-radius: 1.15rem 1.15rem 1.15rem .15rem; cursor: crosshair; touch-action: pan-y}
+  figcaption {display: flex; justify-content: space-between; gap: .8rem; align-items: baseline; color: var(--soft); margin: .4rem 0; font-size: .9rem}
+  figcaption output {white-space: nowrap}
+  .tools {display: grid; gap: .8rem; border-left: 1px solid var(--edge); padding-left: 1rem}
+  .tools h2 {font-size: 1.08rem}
+  .modes {display: grid; gap: .35rem}
+  button {background: #f3f3db; font: inherit; min-height: 44px; padding: .4rem .7rem; color: var(--ink); border: 1px solid var(--edge); border-radius: .3rem; cursor: pointer; text-align: left}
+  button:hover {border-color: var(--deep)}
+  button[aria-pressed=true] {background: var(--deep); border-color: var(--deep); color: white}
+  .exports {display: flex; flex-wrap: wrap; gap: .45rem; border-top: 1px solid var(--edge); padding-top: .8rem}
+  .exports button:first-child {background: var(--deep); color: white}
+  label {display: grid; font-size: .92rem; gap: .15rem}
+  input {min-height: 2rem; margin: 0; accent-color: var(--deep); width: 100%}
+  :where(svg, button, input):focus-visible {outline: 3px solid #235782; outline-offset: 3px}
+  @media (max-width: 46rem) {
+    .workspace {grid-template-columns: minmax(0, 1fr)}
+    .tools {border-left: 0; padding-left: 0; border-top: 1px solid var(--edge); padding-top: .8rem}
+    .modes {display: flex; flex-wrap: wrap}
+  }
+</style>
+<main>
+  <header><h1>Contour Cursor</h1><p>An imaginary survey sheet. Move the probe across the map to bend the surrounding contours.</p></header>
+  <div class="workspace">
+    <figure>
+      <svg id="map" viewBox="0 0 720 500" role="img" aria-labelledby="map-title" aria-describedby="map-guide" tabindex="0" xmlns="http://www.w3.org/2000/svg">
+        <title id="map-title">Interactive fictional terrain map</title>
+        <defs><pattern id="survey-grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#2d655a" opacity=".23"/></pattern></defs>
+        <rect width="720" height="500" fill="#d5e2ba"/>
+        <rect x="20" y="20" width="680" height="460" rx="12" fill="url(#survey-grid)" stroke="#5d7f68"/>
+        <g id="contours" fill="none" stroke-linecap="round" stroke-linejoin="round"></g>
+        <g id="probe" fill="none" stroke="#203e45" stroke-width="1.4">
+          <circle r="8" fill="#f4f4df"/><path d="M-15 0h10m10 0h10M0-15v10m0 10v10"/>
+        </g>
+        <g transform="translate(54 423)" fill="#234d46" stroke="#234d46" stroke-width="1.4">
+          <path d="M0 28V0l-6 10h12L0 0" fill="none"/>
+          <text y="-6" text-anchor="middle" stroke="none" font-size="12" font-family="system-ui, sans-serif">N</text>
+        </g>
+      </svg>
+      <figcaption><span id="map-guide">Move or tap the map. Use arrow keys when the map has focus.</span><output id="coordinates" aria-label="Probe coordinates" aria-live="off">360, 250</output></figcaption>
+    </figure>
+    <section class="tools" aria-labelledby="terrain-title">
+      <h2 id="terrain-title">Terrain shapes</h2>
+      <div class="modes" id="modes"></div>
+      <label for="contour-count"><span>Contour lines <output for="contour-count">18</output></span><input id="contour-count" type="range" min="8" max="28" value="18"></label>
+      <label for="pull"><span>Probe influence <output for="pull">65%</output></span><input id="pull" type="range" min="0" max="100" value="65"></label>
+      <div class="exports"><button id="export" type="button">Save SVG</button><button id="center" type="button">Centre probe</button></div>
+    </section>
+  </div>
+  <noscript>Enable JavaScript to draw and edit the contour lines.</noscript>
+</main>
+<script>
+  const terrains = [
+    {name: 'Tidal headland', color: '#2c6863', accent: '#184a52', lobes: 3, twist: 1.05, aspect: .69},
+    {name: 'Basalt ridge', color: '#755545', accent: '#56352e', lobes: 5, twist: -.7, aspect: .56},
+    {name: 'Fern basin', color: '#466836', accent: '#2c4723', lobes: 2, twist: 1.8, aspect: .79},
+  ];
+  const $ = selector => document.querySelector(selector);
+  const svgNamespace = 'http://www.w3.org/2000/svg';
+  const map = $('#map');
+  const paths = $('#contours');
+  const count = $('#contour-count');
+  const pull = $('#pull');
+  const modes = $('#modes');
+  const limit = (value, min, max) => Math.max(min, Math.min(max, value));
+  const prefersStill = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let position = {x: 360, y: 250};
+  let selected = 0;
+  let frame = 0;
+
+  function schedule() {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      draw();
+    });
+  }
+
+  function draw() {
+    const terrain = terrains[selected];
+    const total = Number(count.value);
+    const strength = Number(pull.value) / 100;
+    const fragment = document.createDocumentFragment();
+    for (let level = total; level >= 1; level -= 1) {
+      const fraction = level / total;
+      const baseRadius = 14 + 226 * fraction;
+      let data = '';
+      for (let sample = 0; sample <= 144; sample += 1) {
+        const angle = sample * Math.PI / 72;
+        const direction = angle + terrain.twist * (1 - fraction);
+        const scale = 1 + .13 * Math.sin(terrain.lobes * angle + fraction * 3) + .065 * Math.sin(angle * 7 - fraction * 2);
+        const x = 360 + baseRadius * scale * Math.cos(direction) + 42 * (1 - fraction);
+        const y = 250 + baseRadius * scale * Math.sin(direction) * terrain.aspect - 27 * (1 - fraction);
+        const dx = position.x - x;
+        const dy = position.y - y;
+        const distanceSquared = dx * dx + dy * dy;
+        const weight = strength * .62 * Math.exp(-distanceSquared / 9700);
+        data += `${sample ? 'L' : 'M'}${(x + dx * weight).toFixed(1)} ${(y + dy * weight).toFixed(1)}`;
+      }
+      const path = document.createElementNS(svgNamespace, 'path');
+      const major = level % 5 === 0;
+      path.setAttribute('d', `${data}Z`);
+      path.setAttribute('stroke', major ? terrain.accent : terrain.color);
+      path.setAttribute('stroke-width', major ? '1.6' : '1');
+      fragment.append(path);
+    }
+    paths.replaceChildren(fragment);
+    $('#probe').setAttribute('transform', `translate(${position.x} ${position.y})`);
+    const coordinates = $('#coordinates');
+    const coordinateText = `${Math.round(position.x)}, ${Math.round(position.y)}`;
+    if (coordinates.value !== coordinateText) coordinates.value = coordinateText;
+  }
+
+  function setPosition(x, y) {
+    position = {x: limit(x, 20, 700), y: limit(y, 20, 480)};
+    schedule();
+  }
+
+  function locate(event) {
+    const matrix = map.getScreenCTM();
+    if (!matrix) return;
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+    setPosition(point.x, point.y);
+  }
+
+  terrains.forEach((terrain, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = terrain.name;
+    button.setAttribute('aria-pressed', String(index === selected));
+    button.addEventListener('click', () => {
+      selected = index;
+      [...modes.children].forEach((item, itemIndex) => item.setAttribute('aria-pressed', String(index === itemIndex)));
+      schedule();
+    });
+    modes.append(button);
+  });
+  map.addEventListener('pointermove', event => {
+    if (event.pointerType === 'mouse' && !prefersStill.matches) locate(event);
+  });
+  map.addEventListener('click', locate);
+  map.addEventListener('keydown', event => {
+    const delta = {ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1]}[event.key];
+    if (!delta) return;
+    event.preventDefault();
+    const step = event.shiftKey ? 25 : 8;
+    setPosition(position.x + delta[0] * step, position.y + delta[1] * step);
+  });
+  count.addEventListener('input', () => {
+    $('output[for=contour-count]').value = count.value;
+    schedule();
+  });
+  pull.addEventListener('input', () => {
+    $('output[for=pull]').value = `${pull.value}%`;
+    schedule();
+  });
+  $('#center').addEventListener('click', () => setPosition(360, 250));
+  $('#export').addEventListener('click', () => {
+    draw();
+    const drawing = map.cloneNode(true);
+    drawing.removeAttribute('tabindex');
+    drawing.removeAttribute('aria-describedby');
+    drawing.setAttribute('width', '720');
+    drawing.setAttribute('height', '500');
+    const xml = new XMLSerializer().serializeToString(drawing);
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(new Blob([xml], {type: 'image/svg+xml;charset=utf-8'}));
+    link.href = url;
+    link.download = 'contour-cursor.svg';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  draw();
+</script>
+</html>
